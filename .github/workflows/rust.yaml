@@ -1,0 +1,200 @@
+name: Rust
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  pull_request:
+
+env:
+  CI: 1
+  CARGO_TERM_COLOR: always
+  UNSTABLE_TOOLCHAIN: nightly-2021-07-23
+
+jobs:
+  rustfmt:
+    name: Check rust format
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ env.UNSTABLE_TOOLCHAIN }}
+          override: true
+          components: rustfmt
+
+      - name: cargo fmt --version
+        run: |
+          cargo fmt --version
+
+      - name: Run cargo fmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all --verbose
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-20.04
+    needs:
+      - rustfmt
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - stable
+          - UNSTABLE_TOOLCHAIN
+          - nightly
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain == 'UNSTABLE_TOOLCHAIN' && env.UNSTABLE_TOOLCHAIN|| matrix.toolchain }}
+          override: true
+          components: clippy
+
+      - name: Cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo clippy --version
+        run: |
+          cargo clippy --version
+
+      - name: Run cargo clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --bins --tests ${{ matrix.toolchain != 'stable' && '--features unstable' || '' }}
+
+      - if: failure() && matrix.toolchain == 'nightly'
+        run: |
+          true
+
+  test:
+    name: Test
+    runs-on: ubuntu-20.04
+    needs:
+      - rustfmt
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - stable
+          - UNSTABLE_TOOLCHAIN
+          - nightly
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain == 'UNSTABLE_TOOLCHAIN' && env.UNSTABLE_TOOLCHAIN|| matrix.toolchain }}
+          override: true
+
+      - name: Cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --bins --tests ${{ matrix.toolchain != 'stable' && '--features unstable' || '' }} --no-fail-fast -- --nocapture --test -Z unstable-options --report-time
+
+      - if: failure() && matrix.toolchain == 'nightly'
+        run: |
+          true
+
+  release:
+    name: Release
+    needs:
+      - clippy
+      - test
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-20.04
+            toolchain: UNSTABLE_TOOLCHAIN
+            target: x86_64-unknown-linux-musl
+          # - os: macOS-latest
+          #   toolchain: PROJECT
+          #   target: x86_64-apple-darwin
+          # - os: macOS-latest
+          #   toolchain: PROJECT
+          #   target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install musl-tools
+        if: matrix.os == 'ubuntu-20.04'
+        run: |
+          sudo apt-get install -y musl-tools
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain == 'UNSTABLE_TOOLCHAIN' && env.UNSTABLE_TOOLCHAIN || matrix.toolchain }}
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Release build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          github_ref=${{ github.ref }}
+          version="${github_ref#"refs/tags/"}"
+          target=${{ matrix.target }}
+          release_name="nix-fix-rustup-$version-${{ matrix.target }}"
+          archive="${release_name}.tar.gz"
+          src=`pwd`
+          dist="$src/dist"
+          archiving_dir="${release_name}"
+
+          mkdir "$archiving_dir" "$dist"
+          cp "target/${{ matrix.target }}/release/nix-fix-rustup" README.md LICENSE "$archiving_dir"
+          tar czvf "$archive" "$archiving_dir"
+          rm -r "$archiving_dir"
+          echo -n "$(shasum -ba 256 "$archive" | cut -d " " -f 1)" > "${archive}.sha256"
+
+          echo "::set-output name=archive::$archive"
+          echo "::set-output name=archive-sha256::${archive}.sha256"
+
+      - name: Publish
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive-sha256 }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

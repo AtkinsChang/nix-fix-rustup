@@ -1,0 +1,24 @@
+[package]
+name = "nix-fix-rustup"
+version = "0.1.0"
+edition = "2018"
+
+authors = ["Atkins Chang <atkinschang@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/AtkinsChang/nix-fix-rustup"
+description = """
+A tools for patching rpath and linker for Rust toolchain installed via rustup.rs
+under Nix environment.
+"""
+categories = ["command-line-utilities"]
+keywords = ["nixos", "nixpkgs"]
+
+[features]
+default = []
+
+unstable = []
+
+[dependencies]
+structopt = "0.3"
+snafu = "0.6"
