@@ -6,7 +6,7 @@ rustPlatform.buildRustPackage {
   name = "nix-fix-rustup";
   src = ./.;
 
-  cargoSha256 = "sha256-raZcroAoRqfY+Bl1ltvxcWGwY7ouXq2U7Niu7JN0boQ=";
+  cargoSha256 = "sha256-zw6O58w+ted5add/BBk4Tzir0s9wKin4NuRqxmN5R8o=";
 
   meta = with lib; {
     description = "A tools for patching rpath and linker for Rust toolchain installed via rustup.rs under Nix environment.";
